@@ -27,7 +27,7 @@ class AzureMistralOcrClient:
         include_image_base64: bool = False,
         add_part_headers: bool = True,
     ) -> None:
-        self.api_key = "3YAmxUlV0gx3xpmx8g3G9czkS3lXoWhbmMz65ZzDU1tHtpE7blwyJQQJ99CAACZoyfiXJ3w3AAAAACOGR08k"
+        self.api_key = api_key or os.getenv("AZURE_API_KEY_OCR")
         self.ocr_url = ocr_url
         self.model = model
         self.timeout = httpx.Timeout(timeout_seconds, connect=connect_timeout_seconds)
