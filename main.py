@@ -1,10 +1,8 @@
 # main.py
 import os
 import logging
-
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
-
 from ocr_client import AzureMistralOcrClient
 from extraction_agent import ExtractionAgent
 from queue_worker import QueueWorkerConfig, QueuePdfProcessor
