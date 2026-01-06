@@ -57,7 +57,7 @@ class AzureMistralOcrClient:
         # Chunking
         chunking: Optional[OcrChunkingConfig] = None,
     ) -> None:
-        self.api_key = (api_key or os.getenv("AZURE_MISTRAL_API_KEY", "3YAmxUlV0gx3xpmx8g3G9czkS3lXoWhbmMz65ZzDU1tHtpE7blwyJQQJ99CAACZoyfiXJ3w3AAAAACOGR08k")).strip()
+        self.api_key = (api_key or os.getenv("AZURE_MISTRAL_API_KEY", "")).strip()
         self.ocr_url = ocr_url
         self.model = model
         self.timeout = httpx.Timeout(timeout_seconds, connect=connect_timeout_seconds)

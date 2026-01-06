@@ -83,10 +83,10 @@ Return ONLY the value (or Not found)."""
         deployment: str = "gpt-4.1-mini",
         default_max_output_tokens: int = 800,
     ):
-        self.endpoint = "https://camil-mjxgel5c-eastus2.cognitiveservices.azure.com/"
-        self.api_key = "56WV3DWq81XWh22VR1lecS5EtS9YP7MsWjJ9JtwGEBaulu3RDGvWJQQJ99CAACHYHv6XJ3w3AAAAACOGM4om"
-        self.api_version = "2024-12-01-preview"
-        self.deployment = "gpt-4.1-mini"
+        self.endpoint = endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
+        self.api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
+        self.api_version = os.getenv("AZURE_OPENAI_API_VERSION", api_version)
+        self.deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", deployment)
         self.default_max_output_tokens = default_max_output_tokens
 
         self._client: Optional[AsyncAzureOpenAI] = None

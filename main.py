@@ -28,8 +28,8 @@ worker: QueuePdfProcessor | None = None
 async def startup() -> None:
     await agent.startup()
 
-    conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "DefaultEndpointsProtocol=https;AccountName=cuentatesis;AccountKey=iyJbTjmfhvmCdzYy2Tnb7rXp88NWk1sephqm91UV1qPlk1dW7IOMEthHTxPyi5fQA8gQgZc6EVpy+AStbxmwwg==;EndpointSuffix=core.windows.net").strip()
-    queue_name = os.getenv("AZURE_STORAGE_QUEUE_NAME", "documento-nuevo").strip()
+    conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
+    queue_name = os.getenv("AZURE_STORAGE_QUEUE_NAME", "").strip()
 
     # Visibilidad / batch
     visibility_timeout = int(os.getenv("QUEUE_VISIBILITY_TIMEOUT", "600"))
