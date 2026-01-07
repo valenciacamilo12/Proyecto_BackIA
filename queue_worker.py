@@ -1,4 +1,3 @@
-# queue_worker.py
 import asyncio
 import json
 import logging
@@ -7,7 +6,6 @@ import binascii
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse, unquote
-
 from azure.storage.queue.aio import QueueClient
 from azure.storage.blob.aio import BlobServiceClient
 
@@ -19,30 +17,26 @@ class QueueWorkerConfig:
     storage_connection_string: str
     queue_name: str
 
-    # Visibilidad base para procesamiento normal
     visibility_timeout: int = 600
     max_messages: int = 1
 
-    # Reintentos por mensaje
     max_dequeue_before_poison: int = 5
 
-    # Backoff exponencial del loop (solo cuando NO hay mensajes)
     backoff_initial: float = 1.0
     backoff_max: float = 30.0
 
-    # Backoff por mensaje (cuando el procesamiento falla)
-    msg_retry_initial: int = 15   # segundos
-    msg_retry_max: int = 300      # segundos
+    msg_retry_initial: int = 15
+    msg_retry_max: int = 300
 
-    # Poison queue opcional
     poison_queue_name: Optional[str] = None
 
 
 class QueuePdfProcessor:
-    def __init__(self, cfg: QueueWorkerConfig, *, ocr_client, extraction_agent):
+    def __init__(self, cfg: QueueWorkerConfig, *, ocr_client, extraction_agent, status_client):
         self.cfg = cfg
         self.ocr_client = ocr_client
         self.agent = extraction_agent
+        self.status_client = status_client
 
         self._task: Optional[asyncio.Task] = None
         self._stop_event = asyncio.Event()
@@ -182,6 +176,7 @@ class QueuePdfProcessor:
     async def _handle_message(self, msg) -> bool:
         dq = getattr(msg, "dequeue_count", 1) or 1
 
+        # 1) Parsear payload
         try:
             payload = self._parse_payload(msg.content)
             logger.info("Mensaje decodificado OK. dequeue_count=%s keys=%s", dq, list(payload.keys()))
@@ -190,32 +185,83 @@ class QueuePdfProcessor:
             await self.queue.delete_message(msg)
             return True
 
+        # 2) Extraer campos del mensaje (tu formato real)
         blob_url = payload.get("blobUrl") or payload.get("blob_url") or payload.get("url")
-        if not blob_url:
-            logger.warning("Mensaje sin blobUrl. Se elimina. payload=%s", payload)
+        id_carga = payload.get("idCarga") or payload.get("id_carga")
+        trace_id = payload.get("traceId") or payload.get("trace_id")
+
+        if not blob_url or not id_carga:
+            logger.warning("Mensaje sin blobUrl o idCarga. Se elimina. payload=%s", payload)
             await self.queue.delete_message(msg)
             return True
 
+        # 3) Poison (solo cuando se exceden reintentos)
         if dq >= self.cfg.max_dequeue_before_poison:
+            try:
+                await self.status_client.update_status(
+                    id_carga=id_carga,
+                    status="ERROR",
+                    comment="Max retries exceeded (poison)",
+                )
+                logger.info("Estado ERROR enviado a Back (poison). idCarga=%s", id_carga)
+            except Exception:
+                logger.exception("No se pudo actualizar estado ERROR en Back (poison). idCarga=%s", id_carga)
+
             await self._handle_poison(msg, payload, blob_url, RuntimeError("Max retries exceeded"))
             return True
 
+        # 4) Procesamiento normal
         try:
             pdf_bytes, filename = await self._download_pdf_from_blob_url(blob_url)
-            logger.info("PDF descargado OK. filename=%s size_bytes=%s", filename, len(pdf_bytes))
+            logger.info("PDF descargado OK. idCarga=%s filename=%s size_bytes=%s", id_carga, filename, len(pdf_bytes))
 
             ocr_text = await self.ocr_client.pdf_bytes_to_text(pdf_bytes)
-            logger.info("OCR OK. filename=%s chars=%s", filename, len(ocr_text or ""))
+            logger.info("OCR OK. idCarga=%s filename=%s chars=%s", id_carga, filename, len(ocr_text or ""))
 
             extracted = await self.agent.extract_all(ocr_text)
-            logger.info("AGENTE OK. filename=%s extracted=%s", filename, extracted)
+            logger.info("AGENTE OK. idCarga=%s filename=%s extracted_keys=%s", id_carga, filename, list(extracted.keys()))
+
+            # Éxito -> PROCESSED
+            try:
+                await self.status_client.update_status(
+                    id_carga=id_carga,
+                    status="PROCESSED",
+                    comment=f"Procesado OK (traceId={trace_id or 'N/A'})",
+                )
+                logger.info("Estado PROCESSED enviado a Back. idCarga=%s", id_carga)
+            except Exception:
+                logger.exception("No se pudo actualizar estado PROCESSED en Back. idCarga=%s", id_carga)
 
             await self.queue.delete_message(msg)
-            logger.info("Mensaje eliminado de la cola. filename=%s", filename)
+            logger.info("Mensaje eliminado de la cola. idCarga=%s filename=%s", id_carga, filename)
             return True
 
         except Exception as e:
-            logger.exception("Error procesando msg. dequeue_count=%s (retry): %s", dq, e)
+            err = str(e)
+
+            # Errores NO transitorios: no vale la pena reintentar
+            non_retryable = (
+                "Azure OpenAI client not configured" in err
+                or "missing env vars" in err
+            )
+
+            if non_retryable:
+                try:
+                    await self.status_client.update_status(
+                        id_carga=id_carga,
+                        status="ERROR",
+                        comment="Fallo IA: Azure OpenAI no configurado (missing env vars)",
+                    )
+                    logger.info("Estado ERROR enviado a Back (non-retryable). idCarga=%s", id_carga)
+                except Exception:
+                    logger.exception("No se pudo actualizar estado ERROR en Back (non-retryable). idCarga=%s", id_carga)
+
+                await self.queue.delete_message(msg)
+                logger.error("Mensaje eliminado (non-retryable). idCarga=%s", id_carga)
+                return True
+
+            # Retry normal
+            logger.exception("Error procesando msg. idCarga=%s dequeue_count=%s (retry): %s", id_carga, dq, e)
             return False
 
     async def _apply_message_backoff(self, msg) -> None:

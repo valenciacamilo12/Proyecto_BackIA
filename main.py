@@ -1,11 +1,12 @@
-# main.py
 import os
 import logging
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
+
 from ocr_client import AzureMistralOcrClient
 from extraction_agent import ExtractionAgent
 from queue_worker import QueueWorkerConfig, QueuePdfProcessor
+from status_client import BackStatusClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app")
@@ -20,11 +21,16 @@ ocr_client = AzureMistralOcrClient()
 agent = ExtractionAgent()
 
 worker: QueuePdfProcessor | None = None
+status_client: BackStatusClient | None = None
 
 
 @app.on_event("startup")
 async def startup() -> None:
     await agent.startup()
+
+    # Base URL del Back (obligatorio)
+    global status_client
+    status_client = BackStatusClient()  # lee BACK_BASE_URL
 
     conn = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
     queue_name = os.getenv("AZURE_STORAGE_QUEUE_NAME", "").strip()
@@ -65,6 +71,7 @@ async def startup() -> None:
         ),
         ocr_client=ocr_client,
         extraction_agent=agent,
+        status_client=status_client,  # <-- NUEVO
     )
 
     await worker.start()
@@ -86,10 +93,12 @@ async def startup() -> None:
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
-    global worker
+    global worker, status_client
     if worker:
         await worker.stop()
     await agent.shutdown()
+    if status_client:
+        await status_client.close()
 
 
 @app.get("/")
