@@ -4,8 +4,9 @@ import logging
 import base64
 import binascii
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict, Any
 from urllib.parse import urlparse, unquote
+
 from azure.storage.queue.aio import QueueClient
 from azure.storage.blob.aio import BlobServiceClient
 
@@ -221,14 +222,25 @@ class QueuePdfProcessor:
             extracted = await self.agent.extract_all(ocr_text)
             logger.info("AGENTE OK. idCarga=%s filename=%s extracted_keys=%s", id_carga, filename, list(extracted.keys()))
 
-            # Éxito -> PROCESSED
+            # ✅ Enviar al Back el cuerpo EXACTO esperado (incluye extracted)
+            extracted_payload: Dict[str, Any] = {
+                "file": filename,  # lo pide el contrato del back
+                "radicado": extracted.get("radicado"),
+                "demandado": extracted.get("demandado"),
+                "demandante": extracted.get("demandante"),
+                "fecha_de_recibido": extracted.get("fecha_de_recibido"),
+                "fecha_de_sentencia": extracted.get("fecha_de_sentencia"),
+                "tipo_de_proceso": extracted.get("tipo_de_proceso"),
+            }
+
             try:
                 await self.status_client.update_status(
                     id_carga=id_carga,
                     status="PROCESSED",
                     comment=f"Procesado OK (traceId={trace_id or 'N/A'})",
+                    extracted=extracted_payload,  # <-- NUEVO
                 )
-                logger.info("Estado PROCESSED enviado a Back. idCarga=%s", id_carga)
+                logger.info("Estado PROCESSED+extracted enviado a Back. idCarga=%s", id_carga)
             except Exception:
                 logger.exception("No se pudo actualizar estado PROCESSED en Back. idCarga=%s", id_carga)
 
@@ -246,11 +258,12 @@ class QueuePdfProcessor:
             )
 
             if non_retryable:
+                # ✅ ERROR: solo status + comment (NO mandamos extracted)
                 try:
                     await self.status_client.update_status(
                         id_carga=id_carga,
                         status="ERROR",
-                        comment="Fallo IA: Azure OpenAI no configurado (missing env vars)",
+                        comment="Fallo IA: Azure OpenAI no configurado",
                     )
                     logger.info("Estado ERROR enviado a Back (non-retryable). idCarga=%s", id_carga)
                 except Exception:
