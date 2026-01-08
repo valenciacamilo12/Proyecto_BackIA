@@ -220,18 +220,36 @@ Return ONLY the value (or Not found)."""
         if self._client is None:
             raise HTTPException(status_code=500, detail="Azure OpenAI client not configured (missing env vars).")
 
-        resp = await self._client.chat.completions.create(
-            model=self.deployment,
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": user_text},
-            ],
-            temperature=0.0,
-            top_p=1.0,
-            frequency_penalty=0.0,
-            presence_penalty=0.0,
-            max_completion_tokens=max_tokens or self.default_max_output_tokens,
-        )
+        # ✅ ÚNICO AJUSTE: temperatura.
+        # gpt-5* (ej: gpt-5-mini) no soporta temperature=0.0; solo permite el valor por defecto.
+        is_gpt5 = "gpt-5" in (self.deployment or "").lower()
+
+        if is_gpt5:
+            resp = await self._client.chat.completions.create(
+                model=self.deployment,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": user_text},
+                ],
+                top_p=1.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_completion_tokens=max_tokens or self.default_max_output_tokens,
+            )
+        else:
+            resp = await self._client.chat.completions.create(
+                model=self.deployment,
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": user_text},
+                ],
+                temperature=0.0,
+                top_p=1.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+                max_completion_tokens=max_tokens or self.default_max_output_tokens,
+            )
+
         return (resp.choices[0].message.content or "").strip()
 
     async def _robust_extract(self, prompt: str, full_text: str, preferred_window: Optional[str] = None) -> str:
